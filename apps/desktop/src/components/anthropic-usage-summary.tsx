@@ -3,14 +3,24 @@ import type { ModelOptionProvider, ModelOptionsResult, ProviderUsageWindow } fro
 import { useI18n } from '@/i18n'
 import { formatReset } from '@/lib/provider-limit'
 
-export function anthropicUsagePoll(data: ModelOptionsResult | undefined, updates: number): false | number {
+export function anthropicUsagePoll(
+  data: ModelOptionsResult | undefined,
+  updates: number,
+  failed = false
+): false | number {
   const provider = data?.providers?.find(row => row.slug === 'anthropic')
 
-  if (!provider) {return false}
+  if (!provider) {
+    return false
+  }
 
-  // The catalog warms usage asynchronously; take a bounded second look, then
-  // refresh only while this menu is mounted, without a separate API path.
-  return updates < 4 && !provider.usage ? 2_000 : 300_000
+  // Every catalog read warms usage asynchronously. Follow each five-minute
+  // read once, even if it returned an older valid snapshot. Failures back off.
+  if (failed) {
+    return 300_000
+  }
+
+  return (updates < 4 && !provider.usage) || updates % 2 === 1 ? 2_000 : 300_000
 }
 
 /** Account and model caps are distinct; missing telemetry is never a full gauge. */

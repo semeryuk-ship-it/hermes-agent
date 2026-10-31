@@ -278,7 +278,7 @@ export function ModelCatalogMenu({
     refetchOnMount: query => nousRefetchOnMount(query.state.data),
     refetchInterval: query =>
       nousPricingPoll(query.state.data, query.state.dataUpdateCount) ||
-      anthropicUsagePoll(query.state.data, query.state.dataUpdateCount)
+      anthropicUsagePoll(query.state.data, query.state.dataUpdateCount, query.state.error !== null)
   })
 
   const loading = modelOptions.isPending && !modelOptions.data

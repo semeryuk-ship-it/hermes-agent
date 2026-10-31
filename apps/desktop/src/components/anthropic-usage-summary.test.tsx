@@ -84,5 +84,8 @@ it('bounds cache warmup polling and then refreshes every five minutes', () => {
   delete data.providers[0].usage
   expect(anthropicUsagePoll(data, 1)).toBe(2000)
   expect(anthropicUsagePoll(data, 4)).toBe(300000)
+  expect(anthropicUsagePoll(data, 5)).toBe(2000)
+  expect(anthropicUsagePoll(data, 6)).toBe(300000)
+  expect(anthropicUsagePoll(data, 5, true)).toBe(300000)
   expect(anthropicUsagePoll(undefined, 1)).toBe(false)
 })
