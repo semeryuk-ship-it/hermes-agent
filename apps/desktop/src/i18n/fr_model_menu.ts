@@ -28,6 +28,11 @@ export const frModelMenu = {
   modelResets: (time: string) => `de retour à ${time}`,
   modelLimitedTip: (time: string) =>
     `Ce modèle a atteint sa propre limite et revient à ${time}. Les autres modèles ici fonctionnent toujours.`,
+  accountUsage: 'Limites du compte',
+  opusUsage: 'Opus par semaine',
+  opusUsageUnavailable: 'Opus : données de limite distincte indisponibles',
+  sessionUsage: '5 heures',
+  weekUsage: 'Semaine',
   usageLeft: (percent: number, time: null | string) =>
     time ? `${percent} % restant · réinit. ${time}` : `${percent} % restant`,
   poolAccounts: (count: number) => `${count} ${count === 1 ? 'compte' : 'comptes'}`,

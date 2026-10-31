@@ -61,7 +61,10 @@ export function usageWindows(provider: ModelOptionProvider, nowMs = Date.now()):
     return null
   }
 
-  const windows = liveUsageWindows(provider.usage?.windows ?? [], nowMs)
+  const windows = liveUsageWindows(
+    (provider.usage?.windows ?? []).filter(w => w.scope !== 'model'),
+    nowMs
+  )
 
   return windows.length > 0 ? windows : null
 }

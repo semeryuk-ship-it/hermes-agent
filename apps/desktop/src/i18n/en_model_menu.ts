@@ -30,6 +30,11 @@ export const enModelMenu: Translations['shell']['modelMenu'] = {
   modelResets: (time: string) => `resets ${time}`,
   modelLimitedTip: (time: string) =>
     `This model hit its own limit and resets at ${time}. Other models here still work.`,
+  accountUsage: 'Account limits',
+  opusUsage: 'Opus weekly',
+  opusUsageUnavailable: 'Opus: separate limit data unavailable',
+  sessionUsage: '5 hours',
+  weekUsage: 'Week',
   usageLeft: (percent: number, time: null | string) =>
     time ? `${percent}% left · resets ${time}` : `${percent}% left`,
   poolAccounts: (count: number) => `${count} ${count === 1 ? 'account' : 'accounts'}`,

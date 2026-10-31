@@ -1,12 +1,5 @@
 import type { ModelOptionProvider, ModelOptionsResult, ModelPricing } from '@hermes/shared'
-import {
-  DEFAULT_REASONING_EFFORT,
-  planBlocks,
-  sectionAt,
-  splitRecommended,
-  usageLevel,
-  usageTag
-} from '@hermes/shared'
+import { DEFAULT_REASONING_EFFORT, planBlocks, sectionAt, splitRecommended, usageLevel, usageTag } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -21,6 +14,7 @@ import {
   useState
 } from 'react'
 
+import { anthropicUsagePoll, AnthropicUsageSummary } from '@/components/anthropic-usage-summary'
 import { PlanLimitLine, UsageLevelTag } from '@/components/model-picker'
 import { ProviderStatusChip } from '@/components/provider-status-chip'
 import { Badge } from '@/components/ui/badge'
@@ -282,7 +276,9 @@ export function ModelCatalogMenu({
     // REST fallback can't know about (#53817).
     queryFn: (): Promise<ModelOptionsResult> => requestModelOptions({ gateway, profile, request, sessionId }),
     refetchOnMount: query => nousRefetchOnMount(query.state.data),
-    refetchInterval: query => nousPricingPoll(query.state.data, query.state.dataUpdateCount)
+    refetchInterval: query =>
+      nousPricingPoll(query.state.data, query.state.dataUpdateCount) ||
+      anthropicUsagePoll(query.state.data, query.state.dataUpdateCount)
   })
 
   const loading = modelOptions.isPending && !modelOptions.data
@@ -820,6 +816,7 @@ export function ModelCatalogMenu({
                   />
                   <ProviderStatusChip className="ml-auto mr-0.5" provider={group.provider} />
                 </DropdownMenuItem>
+                {!collapsed && !search ? <AnthropicUsageSummary provider={group.provider} /> : null}
                 {/* Window plans past an allowance: one line saying what happens next (pay as you go
                     or wait for the reset) instead of a note on every row. */}
                 {!collapsed && !search ? <PlanLimitLine className="px-2 pb-1" provider={group.provider} /> : null}
@@ -1451,7 +1448,10 @@ function nousPricingPoll(data: ModelOptionsResult | undefined, updates: number):
 // current-model pin above, so a pinned custom model lands under "Other models" instead of taking the
 // first pick's "Recommended" heading.
 function recommendedFirst(provider: ModelOptionProvider, families: ModelFamily[]): ModelFamily[] {
-  const split = splitRecommended(provider, families.map(family => family.id))
+  const split = splitRecommended(
+    provider,
+    families.map(family => family.id)
+  )
 
   if (!split) {
     return families

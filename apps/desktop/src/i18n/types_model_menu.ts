@@ -20,6 +20,11 @@ export interface ModelMenuTranslations {
   limitedTip: (provider: string, time: null | string) => string
   modelResets: (time: string) => string
   modelLimitedTip: (time: string) => string
+  accountUsage: string
+  opusUsage: string
+  opusUsageUnavailable: string
+  sessionUsage: string
+  weekUsage: string
   usageLeft: (percent: number, time: null | string) => string
   poolAccounts: (count: number) => string
   poolLimited: (limited: number, total: number) => string

@@ -28,6 +28,11 @@ export const ruModelMenu = {
   modelResets: (time: string) => `снова в ${time}`,
   modelLimitedTip: (time: string) =>
     `Эта модель исчерпала собственный лимит и вернётся в ${time}. Остальные модели здесь работают.`,
+  accountUsage: 'Лимиты аккаунта',
+  opusUsage: 'Opus, неделя',
+  opusUsageUnavailable: 'Opus: нет данных об отдельном лимите',
+  sessionUsage: '5 часов',
+  weekUsage: 'Неделя',
   usageLeft: (percent: number, time: null | string) =>
     time ? `Осталось ${percent}% · сброс в ${time}` : `Осталось ${percent}%`,
   poolAccounts: (count: number) => `Аккаунтов: ${count}`,

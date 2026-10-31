@@ -28,6 +28,11 @@ export const jaModelMenu = {
   modelResets: (time: string) => `${time} に再開`,
   modelLimitedTip: (time: string) =>
     `このモデルは個別の上限に達しており、${time} に再開します。ここにある他のモデルは引き続き使えます。`,
+  accountUsage: 'アカウントの上限',
+  opusUsage: 'Opus 週間',
+  opusUsageUnavailable: 'Opus：個別上限のデータは利用できません',
+  sessionUsage: '5時間',
+  weekUsage: '週間',
   usageLeft: (percent: number, time: null | string) =>
     time ? `残り ${percent}% · ${time} にリセット` : `残り ${percent}%`,
   poolAccounts: (count: number) => `${count} アカウント`,
