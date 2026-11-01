@@ -10,6 +10,7 @@ import { normalizeRemoteBaseUrl, normalizeRemoteHeaders, normalizeSshConfig, nor
 import type { ConnectionRegistry, RegistryConnection } from './connection-registry'
 
 interface SshRouteConfig {
+  gatewayMode?: 'native'
   host: string
   keyPath?: string
   mode: 'ssh'

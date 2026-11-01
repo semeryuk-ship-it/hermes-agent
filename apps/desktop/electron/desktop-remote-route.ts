@@ -12,6 +12,7 @@ import { matchingConnectionId, type StoredRoute } from './connection-route-ident
 type RouteSource = 'env' | 'profile' | 'registry' | 'settings'
 
 interface SshRouteConfig {
+  gatewayMode?: 'native'
   host: string
   keyPath?: string
   mode: 'ssh'
