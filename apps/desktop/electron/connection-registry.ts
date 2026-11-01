@@ -41,6 +41,26 @@ export const REGISTRY_VERSION = 2
 
 export const LOCAL_CONNECTION_ID = 'local'
 
+/** Preserve the selected owner protocol for primary and pooled profile dials. */
+export function registrySshConfig(source: RegistryConnection, profile = '') {
+  const profileKey = String(profile ?? '').trim() || 'default'
+
+  return normalizeSshConfig({
+    mode: 'ssh', host: source.host, user: source.user, port: source.port,
+    keyPath: source.keyPath, remoteHermesPath: source.remoteHermesPath,
+    gatewayMode: source.gatewayMode,
+    remoteProfile: source.remoteProfile || (profileKey === 'default' ? '' : profileKey)
+  })
+}
+
+/** Last boundary before a registry dial may create a remote process. */
+export function dialRegistrySshBackend<T>(source: RegistryConnection, config: ReturnType<typeof registrySshConfig>,
+  bootstrap: (config: NonNullable<ReturnType<typeof registrySshConfig>>) => T): T {
+  if (!config) {throw new Error(`SSH connection "${source.label}" has no host configured.`)}
+  if (source.gatewayMode === 'native' && config.gatewayMode !== 'native') {throw new Error('Native SSH profile route lost its owner protocol')}
+  return bootstrap(config)
+}
+
 /** Connection kinds. 'cloud' is remote-shaped (see modeIsRemoteLike) but keeps
  * its provenance so the UI can render the right card and updates can skip
  * platform-managed instances. */

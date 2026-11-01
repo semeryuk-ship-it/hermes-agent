@@ -187,6 +187,7 @@ import {
   buildAgentRoster,
   connectionDialFieldsChanged,
   connectionIdForPendingLogin,
+  dialRegistrySshBackend,
   mergeConnectionInput,
   migrateV1ToRegistry,
   normalizeConnectionInput,
@@ -195,6 +196,7 @@ import {
   reconcileAppliedGlobalConnection,
   reconcileRegistryDrift,
   registryDialConnectionId,
+  registrySshConfig,
   rememberSshEnumeration,
   removeConnection,
   type ResolvedConnectionDescriptor,
@@ -10018,7 +10020,7 @@ async function resolveRemoteBackend(
     // A managed update is restoring the primary: dial the exact connection
     // snapshot the transaction captured, not whatever routing says now.
     const source = managedPrimary.source
-    const sshConfig = managedSshConfig(source, profileKey)
+    const sshConfig = registrySshConfig(source, profileKey)
 
     if (!sshConfig) {
       throw new Error(`SSH connection "${source.label}" has no host configured.`)
@@ -10686,15 +10688,7 @@ async function ensureRegistryBackend(
     }
 
     if (!resolvedRegistrySshConfig) {
-      resolvedRegistrySshConfig = normalizeSshConfig({
-        mode: 'ssh',
-        host: source.host,
-        user: source.user,
-        port: source.port,
-        keyPath: source.keyPath,
-        remoteHermesPath: source.remoteHermesPath,
-        remoteProfile: source.remoteProfile || (profileKey === 'default' ? '' : profileKey)
-      })
+      resolvedRegistrySshConfig = registrySshConfig(source, profileKey)
     }
 
     return resolvedRegistrySshConfig
@@ -10877,17 +10871,9 @@ async function connectRegistryBackend(
   const profileKey = String(profile ?? '').trim() || 'default'
 
   if (source.kind === 'ssh') {
-    // The composite key doubles as the ssh scope so each (connection, profile)
-    // pair owns its own tunnel + remote dashboard; the profile that re-homes
-    // the REMOTE process is the entry's remoteProfile or the requested one —
-    // never the composite string.
-    const sshConfig = resolvedSshConfig
-
-    if (!sshConfig) {
-      throw new Error(`SSH connection "${source.label}" has no host configured.`)
-    }
-
-    const connection = await bootstrapSshConnection(
+    // Each (connection, profile) pair owns its transport. Native sources attach
+    // to the existing owner; remoteProfile names the server-side namespace.
+    const connection = await dialRegistrySshBackend(source, resolvedSshConfig, async sshConfig => bootstrapSshConnection(
       key,
       sshConfig,
       decryptDesktopSecret(source.token),
@@ -10899,7 +10885,7 @@ async function connectRegistryBackend(
         poolKey: key,
         registryConnectionId: source.id
       }
-    )
+    ))
 
     poolEntry.remoteBaseUrl = connection.baseUrl
 
@@ -10917,7 +10903,7 @@ async function connectRegistryBackend(
       // The remote process runs as this profile; the desktop-side profile key
       // is only the routing label. hermes:api uses it to translate explicit
       // self-profile query filters into the backend's namespace.
-      remoteProfile: sshConfig.remoteProfile || '',
+      remoteProfile: resolvedSshConfig.remoteProfile || '',
       logs: hermesLog.slice(-80),
       ...getWindowState()
     }
@@ -10981,7 +10967,7 @@ async function ensureManagedSshBackendAtKey(source, profile, key, correlationId,
     profile,
     key,
     entry,
-    managedSshConfig(source, profile),
+    registrySshConfig(source, profile),
     null,
     correlationId,
     tokenPersistenceSource
@@ -11012,20 +10998,6 @@ async function restoreManagedPrimarySshBackend(source, profile, correlationId) {
       managedPrimaryRestoreOwners.delete(source.id)
     }
   }
-}
-
-function managedSshConfig(source, profile = '') {
-  const profileKey = String(profile ?? '').trim() || 'default'
-
-  return normalizeSshConfig({
-    mode: 'ssh',
-    host: source.host,
-    user: source.user,
-    port: source.port,
-    keyPath: source.keyPath,
-    remoteHermesPath: source.remoteHermesPath,
-    remoteProfile: source.remoteProfile || (profileKey === 'default' ? '' : profileKey)
-  })
 }
 
 async function captureManagedSshScopes(source) {
@@ -11172,7 +11144,7 @@ function remoteUpdateTargetFromState(state): RemoteUpdateTarget {
 async function openManagedSshUpdateTransport(
   source
 ): Promise<{ close: () => Promise<void>; target: RemoteUpdateTarget }> {
-  const config = managedSshConfig(source)
+  const config = registrySshConfig(source)
 
   if (!config) {
     throw new Error(`SSH connection "${source.label}" has no host configured.`)
