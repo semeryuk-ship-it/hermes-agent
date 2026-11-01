@@ -660,6 +660,7 @@ import { enumerateWindowsFrontToBack, enumerationFailed, readWindowBelow } from 
 import { bindWindowChromeEvents } from './window-chrome-events'
 import {
   appliedPrimaryWindowRoute,
+  readForLocalWindow,
   registrySshPoolScopeByConnectionId,
   registrySshScopeForWindowRoute,
   WindowConnectionRouteRegistry
@@ -2018,6 +2019,7 @@ let bootstrapRepairRequested = false
 // looping the user through a destructive venv reinstall.
 let bootstrapRepairAttempt = 0
 const MAX_BOOTSTRAP_REPAIR_SOFT_ATTEMPTS = 3
+let connectionRouteGeneration = 0
 let connectionConfigCache = null
 let connectionConfigCacheMtime = null
 let connectionRegistryCache = null
@@ -8467,6 +8469,7 @@ function readDesktopConnectionConfig() {
   if (connectionConfigCache && connectionConfigCacheMtime === mtime) {
     return connectionConfigCache
   }
+  connectionRouteGeneration++
 
   let config = { mode: 'local', remote: {}, profiles: {} }
 
@@ -8533,6 +8536,7 @@ function writeDesktopConnectionConfig(config) {
   // fields that are NOT encrypted — off other local accounts, matching
   // native-oauth-tokens.json and desktop-installation.json.
   writeSecretFileAtomic(DESKTOP_CONNECTION_CONFIG_PATH, JSON.stringify(config, null, 2))
+  connectionRouteGeneration++
   connectionConfigCache = config
   connectionConfigCacheMtime = fs.statSync(DESKTOP_CONNECTION_CONFIG_PATH).mtimeMs
 }
@@ -8562,6 +8566,7 @@ function readDesktopConnectionsRegistry() {
   if (connectionRegistryCache && connectionRegistryCacheMtime === mtime) {
     return connectionRegistryCache
   }
+  connectionRouteGeneration++
 
   let registry
 
@@ -8665,6 +8670,7 @@ function writeDesktopConnectionsRegistry(registry) {
   // Owner-only for the same reason as connection.json: entries carry
   // safeStorage-encrypted tokens plus URLs and SSH host/user/keyPath.
   writeSecretFileAtomic(DESKTOP_CONNECTIONS_REGISTRY_PATH, JSON.stringify(registry, null, 2))
+  connectionRouteGeneration++
   connectionRegistryCache = registry
   connectionRegistryCacheMtime = fs.statSync(DESKTOP_CONNECTIONS_REGISTRY_PATH).mtimeMs
 }
@@ -15667,20 +15673,24 @@ ipcMain.handle('hermes:requestMicrophoneAccess', async () => {
 // Metadata only (app, title, bounds) — never pixels. On macOS, other apps'
 // window titles are gated behind the Screen Recording permission; pass titles
 // through only when it is ALREADY granted, and never prompt for it here.
-ipcMain.handle('hermes:window:readBelow', async event => {
-  const win = BrowserWindow.fromWebContents(event.sender)
+ipcMain.handle('hermes:window:readBelow', event => readForLocalWindow(
+  () => windowConnectionRoutes.get(event.sender.id),
+  () => ({ config: readDesktopConnectionConfig(), registry: readDesktopConnectionsRegistry(), profile: primaryProfileKey(),
+    env: { token: process.env.HERMES_DESKTOP_REMOTE_TOKEN, url: process.env.HERMES_DESKTOP_REMOTE_URL } }),
+  async () => {
+    const win = BrowserWindow.fromWebContents(event.sender)
 
-  if (!win || win.isDestroyed()) {
-    return null
-  }
+    if (!win || win.isDestroyed()) {
+      return null
+    }
 
-  const titlesAvailable = IS_MAC ? systemPreferences.getMediaAccessStatus?.('screen') === 'granted' : true
+    const titlesAvailable = IS_MAC ? systemPreferences.getMediaAccessStatus?.('screen') === 'granted' : true
 
-  const [x, y] = win.getPosition()
-  const [width, height] = win.getSize()
+    const [x, y] = win.getPosition()
+    const [width, height] = win.getSize()
 
-  return readWindowBelow(process.pid, { x, y, width, height }, titlesAvailable)
-})
+    return readWindowBelow(process.pid, { x, y, width, height }, titlesAvailable)
+  }, () => connectionRouteGeneration))
 
 // Re-route remote-profile session requests to the owning remote backend. Returns
 // `undefined` when not interceptable (caller takes the normal local path), else

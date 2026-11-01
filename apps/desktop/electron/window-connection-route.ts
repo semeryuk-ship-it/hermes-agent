@@ -1,4 +1,5 @@
 import { backendScopeKey, type ConnectionRegistry, LOCAL_CONNECTION_ID } from './connection-registry'
+import { type DesktopRemoteRouteInput, resolveDesktopRemoteRoute } from './desktop-remote-route'
 
 export interface WindowConnectionRoute {
   connectionId: null | string
@@ -114,4 +115,35 @@ export class WindowConnectionRouteRegistry {
   delete(webContentsId: number): void {
     this.routes.delete(webContentsId)
   }
+}
+
+/** OS window metadata belongs only to a backend on this device. Unknown routes deny. */
+export function windowBackendIsLocal(route: WindowConnectionRoute | null, input: DesktopRemoteRouteInput): boolean {
+  try {
+    if (!Array.isArray(input.registry?.connections)) {return false}
+    if (route?.registryScoped) {
+      const source = input.registry.connections.find(item => item.id === route.connectionId)
+      return source?.kind === 'local'
+    }
+    if (input.registry.primary && !input.registry.connections.some(item => item.id === input.registry.primary)) {return false}
+    return resolveDesktopRemoteRoute({ ...input, profile: route?.profile ?? input.profile }) === null
+  } catch {
+    return false
+  }
+}
+
+/** Re-check after async enumeration; never return metadata to a switched window. */
+export async function readForLocalWindow<T>(
+  routeNow: () => WindowConnectionRoute | null,
+  inputNow: () => DesktopRemoteRouteInput,
+  read: () => Promise<T>,
+  generationNow: () => number
+): Promise<T | null> {
+  const route = routeNow()
+  const input = inputNow()
+  const generation = generationNow()
+  if (!windowBackendIsLocal(route, input)) {return null}
+  const result = await read()
+  const currentInput = inputNow()
+  return generationNow() === generation && routeNow() === route && windowBackendIsLocal(route, currentInput) ? result : null
 }
