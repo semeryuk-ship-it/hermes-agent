@@ -4,10 +4,66 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
 import { destroyKeepaliveAgents } from './api-transport'
 import { downloadViaTokenToFile } from './gateway-download-transport'
+import * as localGateway from './local-gateway'
+
+test('local download fallback preserves the native header helper argument contract', async () => {
+  const sentinel = new Error('stop before network')
+  const headers = vi.spyOn(localGateway, 'nativeGatewayHttpHeaders').mockRejectedValue(sentinel)
+  const descriptor = { gatewayEndpoint: { profile_id: 'test' } }
+  const finish = vi.fn()
+  try {
+    await expect(downloadViaTokenToFile('http://127.0.0.1:1/file', null, {}, finish,
+      { gatewayDescriptor: descriptor })).rejects.toBe(sentinel)
+    expect(headers).toHaveBeenCalledExactlyOnceWith(descriptor, 'http://127.0.0.1:1/file')
+    expect(finish).not.toHaveBeenCalled()
+  } finally { headers.mockRestore() }
+})
+
+test('native SSH download uses fresh injected auth on retry and refuses redirects', async () => {
+  const descriptor = { nativeSshId: 'viewer', baseUrl: '', token: null }
+  const tickets: string[] = []
+  const wire: string[] = []
+  let finalized = 0
+  const server = http.createServer((req, res) => {
+    wire.push(String(req.headers['x-hermes-gateway-ticket']))
+    if (wire.length === 1) { req.socket.destroy(); return }
+    if (req.url === '/redirect') { res.writeHead(302, { Location: '/foreign' }); res.end(); return }
+    res.end('file')
+  })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  descriptor.baseUrl = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`
+  const options = { gatewayDescriptor: descriptor, nativeHttpHeaders: async (value, url, method) => {
+    expect(value).toBe(descriptor)
+    expect(method).toBe('GET')
+    expect(new URL(url).origin).toBe(descriptor.baseUrl)
+    const ticket = `test-grant-${tickets.length + 1}`
+    tickets.push(ticket)
+    return { 'X-Hermes-Gateway-Ticket': ticket }
+  } }
+  const finish = async (res: http.IncomingMessage) => {
+    finalized++
+    const chunks: Buffer[] = []
+    for await (const chunk of res) { chunks.push(Buffer.from(chunk)) }
+    return Buffer.concat(chunks).toString()
+  }
+  try {
+    await expect(downloadViaTokenToFile(descriptor.baseUrl + '/file', null, {}, finish, options)).resolves.toBe('file')
+    expect(wire).toEqual(tickets)
+    expect(tickets).toHaveLength(2)
+    await expect(downloadViaTokenToFile(descriptor.baseUrl + '/redirect', null, {}, finish, options)).rejects.toThrow('redirect')
+    expect(wire).toEqual(tickets)
+    expect(wire).toHaveLength(3)
+    expect(finalized).toBe(1)
+  } finally {
+    destroyKeepaliveAgents()
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
+})
 
 test('download transport never follows redirects or retries after the save phase begins', async () => {
   let requests = 0

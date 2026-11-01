@@ -68,6 +68,7 @@ function routeIdentity(route: StoredRoute): null | string {
       port: ssh.port || 22,
       remoteHermesPath: ssh.remoteHermesPath || '',
       remoteProfile: ssh.remoteProfile || '',
+      ...(ssh.gatewayMode === 'native' ? { gatewayMode: 'native' } : {}),
       user: (ssh.user || '').trim().toLowerCase()
     })
   }

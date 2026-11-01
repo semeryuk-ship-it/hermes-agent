@@ -4,6 +4,8 @@ import type { GatewayEndpoint } from './local-gateway'
 import { configurePythonGatewayTicketClient, createLocalGatewayDials, createStaleGatewayRestarter, ensureLocalGateway, gatewayOwnerProfile, localGatewayDial, nativeGatewayHttpHeaders, redialLocalGateway, runGatewayEnsure, runGatewayOwnerRestart } from './local-gateway'
 import { closeGatewayTicketBridges, createGatewayTicketResolver } from './local-gateway-python'
 import { createPluginWsUrlHandler } from './plugin-ws-url'
+import { bootstrapNativeSshViewer, closeOwnedNativeSshViewer, recoverPendingNativeSshCleanup } from './ssh-native-bootstrap'
+import { createNativeSshAuth, type NativeSshConnection } from './ssh-native-connection'
 const localGatewayDials = createLocalGatewayDials()
 configurePythonGatewayTicketClient(createGatewayTicketResolver(
   async () => ensureRuntime(await resolveHermesBackend([]), () => undefined), resolveHermesCwd))
@@ -567,7 +569,7 @@ import { createBootstrapCoordinator, sshConfigFingerprint } from './ssh-bootstra
 import { collectSshConfigHosts, parseSshGOutput } from './ssh-config'
 import { createSshProbeConnection, pickLocalPort, redactSecrets, SshConnection } from './ssh-connection'
 import { createSshIsolatedKeepaliveRegistry } from './ssh-isolated-keepalive'
-import { createSshTeardownTracker } from './ssh-teardown'
+import { createSshTeardownTracker, teardownDesktopSshConnection } from './ssh-teardown'
 import { createStreamThrottle } from './stream-throttle'
 import { installSystemCaTrust } from './system-ca'
 import { registerTerminalIpc } from './terminal-ipc'
@@ -5268,7 +5270,7 @@ function fetchJson(url, token, options: any = {}) {
     async (requestState: any) => {
       // Mint inside each retry: a grant authorizes exactly one HTTP request.
       const nativeHeaders = options.gatewayDescriptor
-        ? await nativeGatewayHttpHeaders(options.gatewayDescriptor, url, HERMES_HOME, options.method || 'GET', options.upload ? undefined : options.body)
+        ? await nativeSshAuth.httpHeaders(options.gatewayDescriptor, url, options.method || 'GET', options.upload ? undefined : options.body)
         : null
 
       return new Promise((resolve, reject) => {
@@ -7517,6 +7519,7 @@ const ensureNativeAccessToken: (baseUrl: string, options?: NativeAccessTokenOpti
 
 interface GatewayFileConnection extends RegistryBackendRequestScope {
   gatewayEndpoint?: GatewayEndpoint
+  nativeSshId?: string
   authMode?: 'oauth' | 'token' | 'native'
   baseUrl: string
   token?: null | string
@@ -7590,7 +7593,7 @@ async function saveGatewayFile(payload: GatewayFileSavePayload = {}): Promise<Ga
       // A canonical local gateway authenticates with its native descriptor
       // headers; that transport also retries the connection phase and refuses
       // redirects so a one-use grant never reaches a new target.
-      if (connection.gatewayEndpoint) {
+      if (connection.gatewayEndpoint || connection.nativeSshId) {
         return downloadViaNativeGatewayToFile(
           url,
           connection.token ?? null,
@@ -7601,7 +7604,7 @@ async function saveGatewayFile(payload: GatewayFileSavePayload = {}): Promise<Ga
             _headers: http.IncomingHttpHeaders,
             transport: { abort: () => void }
           ): Promise<GatewayFileSaveResult> => finalizeGatewayDownload(response, context, transport.abort, deps),
-          { gatewayDescriptor: connection }
+          { gatewayDescriptor: connection, nativeHttpHeaders: nativeSshAuth.httpHeaders }
         )
       }
 
@@ -7675,6 +7678,8 @@ async function freshGatewayWsUrl(profile, webContentsId) {
   // the wrong profile's DB. A null/empty profile resolves to the primary, so
   // legacy callers and single-profile users are unchanged.
   const connection = await ensureBackend(profile)
+
+  if (connection.nativeSshId) {return nativeSshAuth.dial(connection, profile, webContentsId)}
 
   if (connection.gatewayEndpoint) {
     return localGatewayDial({ ensure: () => ensureBackend(profile), forget: () => forgetLocalGatewayDescriptor(profile), launchHome: HERMES_HOME,
@@ -9152,7 +9157,8 @@ function buildSshBlock(input: any, existingBlock: any = {}) {
     port: input.sshPort ?? existingBlock.port,
     keyPath: input.sshKeyPath ?? existingBlock.keyPath,
     remoteHermesPath: input.sshRemoteHermesPath ?? existingBlock.remoteHermesPath,
-    remoteProfile: input.sshRemoteProfile ?? existingBlock.remoteProfile
+    remoteProfile: input.sshRemoteProfile ?? existingBlock.remoteProfile,
+    gatewayMode: input.sshGatewayMode ?? existingBlock.gatewayMode
   })
 
   if (!merged) {
@@ -9241,6 +9247,13 @@ async function buildRemoteConnection(
 }
 
 const sshConnections = new Map<string, any>()
+const nativeSshConnections = new Map<string, NativeSshConnection>()
+const pendingNativeSshCleanup = new Map<string, any>()
+
+const nativeSshAuth = createNativeSshAuth(nativeSshConnections, {
+  localHeaders: (connection,url,method,body) => nativeGatewayHttpHeaders(connection as any,url,HERMES_HOME,method,body),
+  prepare: localGatewayDials.prepare, preparePlugin: localGatewayDials.preparePlugin
+})
 
 const sshIsolatedKeepalives = createSshIsolatedKeepaliveRegistry({
   log: chunk => sshRememberLog(chunk)
@@ -9470,42 +9483,13 @@ async function sshProbeReuseProof(baseUrl, token, spawnNonce) {
 }
 
 async function teardownSshConnection(profile) {
-  const scope = sshScopeKey(profile)
-  sshIsolatedKeepalives.stop(scope)
-  const state = sshConnections.get(scope)
-
-  if (!state) {
-    return
-  }
-
-  sshConnections.delete(scope)
-
-  terminalIpc.disposeTerminalSessionsForSshScope(scope)
-
-  // Kill the owned remote serve --isolated *before* closing the SSH
-  // transport. Spawn detaches with setsid/nohup, so closing the tunnel
-  // alone leaves the backend at pid 1 holding state.db (#91668).
-  // Windows remotes use a different lifecycle (connectWindowsRemote) and
-  // are left to a follow-up; POSIX is the leak that OOM'd gateways.
-  await sshTeardowns.track(state.ssh, (): Promise<void> =>
-    teardownSshState(
-      {
-        ...state,
-        ownershipId: state.ownershipId || sshOwnershipKey(profile)
-      },
-      {
-        cleanupRemote:
-          state.remotePlatform === 'Windows'
-            ? async () => {
-                // connectWindowsRemote does not share POSIX lock/kill. Stay
-                // silent on the kill path, but leave a log so quit is not a
-                // mysterious no-op on Windows remotes.
-                sshRememberLog('[ssh] skip remote serve teardown on Windows remotes; POSIX disconnect does not apply')
-              }
-            : remoteLifecycle.disconnect
-      }
-    )
-  )
+  return teardownDesktopSshConnection(profile, {
+    sshScopeKey, sshConnections, pendingNativeSshCleanup, nativeSshConnections,
+    recoverPendingNativeSshCleanup, closeOwnedNativeSshViewer, teardownSshState, sshOwnershipKey,
+    stopKeepalive: scope => sshIsolatedKeepalives.stop(scope),
+    disposeTerminals: scope => terminalIpc.disposeTerminalSessionsForSshScope(scope),
+    trackTeardown: sshTeardowns.track, rememberLog: sshRememberLog, disconnectLegacy: remoteLifecycle.disconnect
+  })
 }
 
 // CRITICAL: this must mirror resolveRemoteBackend's precedence, not just return
@@ -9790,11 +9774,12 @@ async function bootstrapSshConnectionInner(profile, sshConfig, reuseToken, sourc
   const hostLabel = sshConfig.user ? `${sshConfig.user}@${sshConfig.host}` : sshConfig.host
   const existing = sshConnections.get(scope)
 
-  if (existing && existing.fingerprint !== fingerprint) {
+  if (existing && existing.fingerprint !== fingerprint && !(sshConfig.gatewayMode === 'native' && existing.nativeSshId)) {
     await teardownSshConnection(profile)
   }
 
-  let ssh = sshConnections.get(scope)?.ssh
+  if (sshConfig.gatewayMode === 'native') {await recoverPendingNativeSshCleanup(scope, pendingNativeSshCleanup, nativeSshConnections)}
+  let ssh = sshConfig.gatewayMode === 'native' ? null : sshConnections.get(scope)?.ssh
 
   if (ssh && !(await ssh.isAlive())) {
     try {
@@ -9817,6 +9802,7 @@ async function bootstrapSshConnectionInner(profile, sshConfig, reuseToken, sourc
       { host: sshConfig.host, user: sshConfig.user, port: sshConfig.port, keyPath: sshConfig.keyPath },
       {
         rememberLog: sshRememberLog,
+        mux: sshConfig.gatewayMode === 'native' ? false : undefined,
         sshBinary: desktopSshBinary(),
         ownershipId: sshOwnershipKey(profile),
         scope,
@@ -9824,7 +9810,15 @@ async function bootstrapSshConnectionInner(profile, sshConfig, reuseToken, sourc
       }
     )
     removeForceCleanup = lease.onForceCleanup(() => ssh.close())
-    await ssh.open({ signal: lease.signal })
+    if (sshConfig.gatewayMode !== 'native') {await ssh.open({ signal: lease.signal })}
+  }
+
+  if (sshConfig.gatewayMode === 'native') {
+    return bootstrapNativeSshViewer({ ssh, sshConfig, profile, source, metadata, fingerprint, lease, created, removeForceCleanup }, {
+      sshScopeKey, sshConnections, nativeSshConnections, pendingNativeSshCleanup, detectRemotePlatform, resolveRemoteSshDashboardProfile,
+      locateHermes: remoteLifecycle.locateHermes, expandRemotePath: remoteLifecycle.expandRemotePath, pickLocalPort,
+      fenceManagedSshBootstrapPublication, assertCanDial: (id, correlation) => managedConnectionUpdateGate.assertCanDial(id, correlation)
+    })
   }
 
   let result: any
@@ -11035,6 +11029,9 @@ function managedSshConfig(source, profile = '') {
 }
 
 async function captureManagedSshScopes(source) {
+  if (source.gatewayMode === 'native') {
+    throw new Error('This SSH connection views an existing gateway; update its runtime on the server instead of managing a Desktop-owned process')
+  }
   const prefix = backendScopePrefix(source.id)
   const config = readDesktopConnectionConfig()
   const registry = readDesktopConnectionsRegistry()
@@ -15157,6 +15154,8 @@ ipcMain.handle('hermes:gateway:ws-url-for', async (_event, payload) => {
   return gatewayWsUrlIpcResult(async () => {
     const connection = await ensureRegistryBackend(payload?.connectionId, payload?.profile)
 
+    if (connection.nativeSshId) {return nativeSshAuth.dial(connection, payload?.profile, _event.sender.id)}
+
     if (connection.gatewayEndpoint) {
       return localGatewayDial({ ensure: () => ensureRegistryBackend(payload?.connectionId, payload?.profile), launchHome: HERMES_HOME,
         forget: () => forgetRegistryLocalGatewayDescriptor(payload?.connectionId, payload?.profile), profile: String(payload?.profile ?? ''),
@@ -15168,7 +15167,8 @@ ipcMain.handle('hermes:gateway:ws-url-for', async (_event, payload) => {
 })
 
 const pluginWsUrl = createPluginWsUrlHandler({ ensureBackend, ensureRegistryBackend, forgetLocalGatewayDescriptor,
-  forgetRegistryLocalGatewayDescriptor, launchHome: HERMES_HOME, prepare: localGatewayDials.preparePlugin })
+  forgetRegistryLocalGatewayDescriptor, launchHome: HERMES_HOME, prepare: localGatewayDials.preparePlugin,
+  nativeSshDial: (connection, profile, path, windowId) => nativeSshAuth.dial(connection, profile, windowId, path) })
 
 ipcMain.handle('hermes:plugin:ws-url', (event, payload) => pluginWsUrl(payload ?? {}, event.sender.id))
 
@@ -15321,7 +15321,7 @@ async function fetchJsonForBackend(
   // A native grant names one profile and the gateway refuses `all`: assemble the unified
   // session lists, project tree and PR scan from one read per profile, each carrying that
   // profile's own grant.
-  if (descriptor.gatewayEndpoint && !opts.profileScoped) {
+  if ((descriptor.gatewayEndpoint || descriptor.nativeSshId) && !opts.profileScoped) {
     const sessions = isAllProfilesSessionListRequest(opts.method, path)
 
     if (sessions || isAllProfilesAggregateRequest(opts.method, path)) {
@@ -15367,7 +15367,7 @@ async function fetchJsonForBackend(
     upload: opts.upload,
     timeoutMs: opts.timeoutMs,
     headers: descriptor.headers,
-    gatewayDescriptor: descriptor.gatewayEndpoint ? descriptor : undefined
+    gatewayDescriptor: descriptor.gatewayEndpoint || descriptor.nativeSshId ? descriptor : undefined
   })
 }
 

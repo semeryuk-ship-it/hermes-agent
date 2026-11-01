@@ -1633,3 +1633,9 @@ test('FIX #95701: transport and server failures at the ticket mint stay retryabl
     assert.equal(wrapped.isReauthRequired, undefined)
   }
 })
+
+test('native SSH intent is preserved and unknown intent cannot fall back to a dashboard owner', () => {
+  assert.equal(normalizeSshConfig({mode:'ssh',host:'box',gatewayMode:'native'}).gatewayMode,'native')
+  assert.throws(() => normalizeSshConfig({mode:'ssh',host:'box',gatewayMode:'unknown'}), /Unsupported SSH gateway mode/)
+  assert.deepEqual(normalizeSshConfig({mode:'ssh',host:'box',gatewayMode:'dashboard'}),{mode:'ssh',host:'box'})
+})

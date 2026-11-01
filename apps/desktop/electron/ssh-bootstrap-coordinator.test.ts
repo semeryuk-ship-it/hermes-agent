@@ -324,3 +324,9 @@ test('a start after shutdown rejects with a marked expected-transition sentinel'
       (error as Error).message === 'SSH bootstrap was cancelled because Desktop is quitting.'
   )
 })
+
+test('a dashboard bootstrap cannot be reused for the same host in native owner mode', () => {
+  const route={host:'box',user:'ubuntu',remoteProfile:'default'}
+  assert.notEqual(sshConfigFingerprint('default',route),sshConfigFingerprint('default',{...route,gatewayMode:'native'}))
+  assert.equal(sshConfigFingerprint('default',route),sshConfigFingerprint('default',{...route,gatewayMode:'dashboard'}))
+})

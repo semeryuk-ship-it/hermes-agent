@@ -505,6 +505,12 @@ export function nativeGrantRoute(url: string, body?: unknown, method?: string): 
   return typeof profile === 'string' && profile.trim() ? profile : url
 }
 
+/** Profile selector shared by native local and SSH ticket transports. */
+export function nativeGrantProfile(url: string, body?: unknown, method?: string): string {
+  const route = nativeGrantRoute(url, body, method)
+  return /^[a-z]+:\/\//.test(route) ? (scopedProfileOf(new URL(route), method)?.trim() || '') : route
+}
+
 export async function nativeGatewayHttpHeaders(descriptor: { gatewayEndpoint: GatewayEndpoint; baseUrl: string }, url: string, launchHome = descriptor.gatewayEndpoint.profile_id, method = 'GET', body?: unknown) {
   if (new URL(url).origin !== descriptor.gatewayEndpoint.api_origin || descriptor.baseUrl !== descriptor.gatewayEndpoint.api_origin) {
     throw new Error('Native gateway HTTP origin mismatch')

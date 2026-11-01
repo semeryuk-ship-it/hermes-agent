@@ -36,3 +36,58 @@ export function createSshTeardownTracker() {
     }
   }
 }
+
+export async function teardownDesktopSshConnection(profile, deps) {
+  const { sshScopeKey, stopKeepalive, sshConnections, pendingNativeSshCleanup, nativeSshConnections,
+    recoverPendingNativeSshCleanup, disposeTerminals, trackTeardown, closeOwnedNativeSshViewer,
+    teardownSshState, sshOwnershipKey, rememberLog, disconnectLegacy } = deps
+  const scope = sshScopeKey(profile)
+  stopKeepalive(scope)
+  const state = sshConnections.get(scope)
+  await recoverPendingNativeSshCleanup(scope, pendingNativeSshCleanup, nativeSshConnections)
+  if (sshConnections.get(scope) !== state) {return}
+
+  if (!state) {
+    return
+  }
+
+  disposeTerminals(scope)
+
+  if (state.nativeSshId) {
+    if (!state.nativeCleanupPromise) {
+      const records = [{id:state.nativeSshId,ssh:state.ssh,ownedTunnels:state.nativeOwnedTunnels}, ...(state.retiredNativeSshConnections || [])]
+      state.nativeCleanupPromise = trackTeardown(state.ssh, async () => {
+        for (const record of records) {await closeOwnedNativeSshViewer(record, nativeSshConnections)}
+        if (sshConnections.get(scope) === state) {sshConnections.delete(scope)}
+      }).catch(error => {state.nativeCleanupPromise = null; throw error})
+    }
+    await state.nativeCleanupPromise
+    return
+  }
+  sshConnections.delete(scope)
+
+  // Kill the owned remote serve --isolated *before* closing the SSH
+  // transport. Spawn detaches with setsid/nohup, so closing the tunnel
+  // alone leaves the backend at pid 1 holding state.db (#91668).
+  // Windows remotes use a different lifecycle (connectWindowsRemote) and
+  // are left to a follow-up; POSIX is the leak that OOM'd gateways.
+  await trackTeardown(state.ssh, (): Promise<void> =>
+    teardownSshState(
+      {
+        ...state,
+        ownershipId: state.ownershipId || sshOwnershipKey(profile)
+      },
+      {
+        cleanupRemote:
+          state.remotePlatform === 'Windows'
+            ? async () => {
+                // connectWindowsRemote does not share POSIX lock/kill. Stay
+                // silent on the kill path, but leave a log so quit is not a
+                // mysterious no-op on Windows remotes.
+                rememberLog('[ssh] skip remote serve teardown on Windows remotes; POSIX disconnect does not apply')
+              }
+            : disconnectLegacy
+      }
+    )
+  )
+}

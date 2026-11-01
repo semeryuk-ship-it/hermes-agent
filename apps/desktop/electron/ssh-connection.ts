@@ -502,7 +502,7 @@ function sshErrorMessage(kind, conn, stderr?) {
 // (null on a normal exit). On timeout the child is SIGKILLed and the promise
 // rejects with err.kind = TIMEOUT. `spawnFn` is injectable for tests; `command`
 // is the ssh client binary (resolveSshBinary; bare `ssh` by default).
-function runSsh(args, { timeoutMs, spawnFn = spawn, command = 'ssh', stdin = 'ignore', stdinData, signal }: any = {}) {
+function runSsh(args, { timeoutMs, spawnFn = spawn, command = 'ssh', stdin = 'ignore', stdinData, signal, maxOutputBytes }: any = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       const error: any = new Error('SSH operation was cancelled.')
@@ -512,6 +512,9 @@ function runSsh(args, { timeoutMs, spawnFn = spawn, command = 'ssh', stdin = 'ig
       return
     }
 
+    if (maxOutputBytes !== undefined && (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 1)) {
+      reject(new Error('Invalid SSH output limit')); return
+    }
     const useStdinPipe = stdinData != null || stdin !== 'ignore'
     let child
 
@@ -579,12 +582,23 @@ function runSsh(args, { timeoutMs, spawnFn = spawn, command = 'ssh', stdin = 'ig
       onAbort()
     }
 
-    child.stdout?.on('data', d => {
-      stdout += d.toString()
-    })
-    child.stderr?.on('data', d => {
-      stderr += d.toString()
-    })
+    let outputBytes = 0
+    const collect = (chunk, stream: 'stdout' | 'stderr') => {
+      if (settled) {return}
+      outputBytes += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk))
+      if (maxOutputBytes !== undefined && outputBytes > maxOutputBytes) {
+        settled = true
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+        stdout = ''; stderr = ''
+        try {child.kill('SIGKILL')} catch { /* already exited */ }
+        reject(new Error('SSH control response exceeded its output limit'))
+        return
+      }
+      if (stream === 'stdout') {stdout += chunk.toString()} else {stderr += chunk.toString()}
+    }
+    child.stdout?.on('data', d => collect(d, 'stdout'))
+    child.stderr?.on('data', d => collect(d, 'stderr'))
     child.on('error', error => {
       if (settled) {
         return
@@ -1018,11 +1032,12 @@ class SshConnection {
   //
   // sshd hands the command to the user's LOGIN shell. Payloads are POSIX sh, so
   // fish rejects `help="$(…)"`. On Linux/Darwin wrap in `sh -c`; Windows stays raw.
-  async exec(remoteCommand, { timeoutMs, stdinData }: any = {}) {
+  async exec(remoteCommand, { timeoutMs, stdinData, maxOutputBytes }: any = {}) {
     if (this._posixRemote === null) {
       try {
         const probe: any = await runSsh(buildExecArgs(this, 'uname -s', this._connectTimeoutMs), {
           timeoutMs: timeoutMs ?? this._execTimeoutMs,
+          maxOutputBytes,
           spawnFn: this._spawnFn,
           command: this.sshBinary
         })
@@ -1042,6 +1057,7 @@ class SshConnection {
     try {
       result = await runSsh(args, {
         timeoutMs: timeoutMs ?? this._execTimeoutMs,
+          maxOutputBytes,
         spawnFn: this._spawnFn,
         command: this.sshBinary,
         ...(stdinData != null ? { stdinData } : {})

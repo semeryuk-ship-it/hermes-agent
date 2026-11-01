@@ -28,6 +28,7 @@ export function isMintPermissionRefusal(error: unknown): boolean {
 interface ResolvedBackend {
   baseUrl: string
   gatewayEndpoint?: GatewayEndpoint
+  nativeSshId?: string
 }
 
 /** A path segment as the server reads it (decoded once), or null when it is not valid encoding. */
@@ -77,6 +78,7 @@ export function createPluginWsUrlHandler(deps: {
   forgetLocalGatewayDescriptor: (profile: unknown) => Promise<void> | void
   forgetRegistryLocalGatewayDescriptor: (connectionId: unknown, profile: unknown) => Promise<void> | void
   launchHome: string
+  nativeSshDial?: (backend: ResolvedBackend, profile: unknown, path: string, webContentsId: number) => Promise<string>
   mint?: typeof mintLocalGatewayTicket
   prepare: (origin: string, path: string, ticket: string, webContentsId: number) => string
 }) {
@@ -85,7 +87,12 @@ export function createPluginWsUrlHandler(deps: {
     const { connectionId, profile } = request
     const ensure = () => (connectionId ? deps.ensureRegistryBackend(connectionId, profile) : deps.ensureBackend(profile))
 
-    if (!(await ensure()).gatewayEndpoint) {
+    const backend = await ensure()
+    if (backend.nativeSshId) {
+      if (!deps.nativeSshDial) {throw new Error('Native SSH plugin socket transport unavailable')}
+      return deps.nativeSshDial(backend, profile, path, webContentsId)
+    }
+    if (!backend.gatewayEndpoint) {
       return null
     }
 

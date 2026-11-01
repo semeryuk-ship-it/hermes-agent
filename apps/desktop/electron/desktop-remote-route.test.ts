@@ -9,6 +9,26 @@ import { registryPrimaryBootRoute, resolveDesktopRemoteRoute, v1SshTerminalPoolK
 const tokenA = { encoding: 'plain', value: 'token-a' }
 const tokenB = { encoding: 'plain', value: 'token-b' }
 
+test('native SSH settings select only the matching native registry transport', () => {
+  const route = resolveDesktopRemoteRoute({
+    config: { mode: 'ssh', remote: { host: 'hermes-uz', gatewayMode: 'native' } },
+    registry: registry('native', [
+      { id: 'legacy', kind: 'ssh', label: 'Legacy', host: 'hermes-uz' },
+      { id: 'native', kind: 'ssh', label: 'Native', host: 'hermes-uz', gatewayMode: 'native' }
+    ])
+  })
+  assert.equal(route?.kind, 'ssh')
+  assert.equal(route?.connectionId, 'native')
+  assert.equal(route?.kind === 'ssh' && route.ssh.gatewayMode, 'native')
+})
+
+test('unknown SSH gateway mode never resolves as local or legacy', () => {
+  assert.throws(() => resolveDesktopRemoteRoute({
+    config: { mode: 'ssh', remote: { host: 'hermes-uz', gatewayMode: 'unknown' } },
+    registry: registry('local', [])
+  }), /Unsupported SSH gateway mode/)
+})
+
 function registry(primary: string, connections: Record<string, unknown>[]) {
   return normalizeRegistry({
     version: REGISTRY_VERSION,

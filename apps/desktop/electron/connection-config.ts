@@ -478,6 +478,10 @@ function normalizeSshConfig(entry) {
   }
 
   const out: any = { mode: 'ssh', host }
+  if (entry.gatewayMode !== undefined && !['native', 'dashboard'].includes(entry.gatewayMode)) {
+    throw new Error('Unsupported SSH gateway mode')
+  }
+  if (entry.gatewayMode === 'native') {out.gatewayMode = 'native'}
   const user = String(entry.user || '').trim() || parsedUser || ''
 
   if (user) {

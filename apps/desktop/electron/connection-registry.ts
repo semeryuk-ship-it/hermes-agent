@@ -73,6 +73,7 @@ export interface RegistryConnection {
   keyPath?: string
   remoteHermesPath?: string
   remoteProfile?: string
+  gatewayMode?: 'native'
 }
 
 /**
@@ -231,6 +232,7 @@ export interface ResolvedConnectionSshDescriptor {
   port?: number
   remoteHermesPath?: string
   remoteProfile?: string
+  gatewayMode?: 'native'
   user?: string
 }
 
@@ -429,7 +431,8 @@ export async function reuseMatchingPrimarySshBackend({
     !activeSsh ||
     sourceFingerprint !== String(activeSsh.effectiveConfigFingerprint || '').trim() ||
     String(source.remoteHermesPath || '').trim() !== String(activeSsh.remoteHermesPath || '').trim() ||
-    rootProfile(source.remoteProfile) !== rootProfile(activeSsh.remoteProfile)
+    rootProfile(source.remoteProfile) !== rootProfile(activeSsh.remoteProfile) ||
+    source.gatewayMode !== activeSsh.gatewayMode
   ) {
     return null
   }
@@ -931,6 +934,7 @@ export interface ConnectionInput {
   keyPath?: string
   remoteHermesPath?: string
   remoteProfile?: string
+  gatewayMode?: 'native'
 }
 
 /**
@@ -999,6 +1003,7 @@ export function normalizeConnectionInput(input: ConnectionInput, registry: Conne
       port: input.port,
       keyPath: input.keyPath,
       remoteHermesPath: input.remoteHermesPath,
+      gatewayMode: input.gatewayMode,
       remoteProfile: input.remoteProfile
     })
 
@@ -1128,6 +1133,7 @@ export function mergeConnectionInput(input: ConnectionInput, existing?: null | R
   inherit('keyPath')
   inherit('remoteHermesPath')
   inherit('remoteProfile')
+  inherit('gatewayMode')
   // Headers inherit like other dial fields: an edit payload that omits the
   // field keeps the stored set; an explicit payload (even {}) is
   // authoritative so the editor can clear them.
@@ -1169,7 +1175,8 @@ export function connectionDialFieldsChanged(before: RegistryConnection, after: R
     'port',
     'keyPath',
     'remoteHermesPath',
-    'remoteProfile'
+    'remoteProfile',
+    'gatewayMode'
   ]
 
   for (const field of fields) {

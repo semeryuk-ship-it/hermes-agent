@@ -14,6 +14,8 @@ function sshConfigFingerprint(scope, config) {
     config.effectiveConfigFingerprint
   ]
 
+  if (config.gatewayMode === 'native') {parts.push('native-owner')}
+
   return crypto
     .createHash('sha256')
     .update(JSON.stringify(parts.map(value => value ?? '')))
