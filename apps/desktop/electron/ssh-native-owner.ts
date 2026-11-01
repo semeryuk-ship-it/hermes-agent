@@ -86,9 +86,13 @@ function owner(value: unknown): NativeSshOwner {
 export function createNativeSshOwnerClient(ssh: NativeSshExec, hermesLauncher: string) {
   if (!hermesLauncher.startsWith('/') || /[\r\n\0]/.test(hermesLauncher)) {throw new Error('Invalid remote Hermes launcher')}
   let bootstrap: string[] | undefined
+  let closed = false
+  let pending = 0
+  let tail: Promise<void> = Promise.resolve()
 
-  async function request(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  async function executeRequest(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     try {
+      if (closed) {throw new Error('Viewer closed')}
       if (!bootstrap) {
         const output = await ssh.exec(`${quote(hermesLauncher)} --print-runtime-command --module run_agent`, { timeoutMs: 15_000, maxOutputBytes: limit })
         if (output.length > limit) {throw new Error('Runtime response too large')}
@@ -101,6 +105,7 @@ export function createNativeSshOwnerClient(ssh: NativeSshExec, hermesLauncher: s
         bootstrap = [...argv.slice(0, -1), code.split(marker)[0] + "exec(compile(sys.stdin.buffer.read(), '<desktop-native-ssh>', 'exec'))"]
       }
       // Request is data inside Python source via a JSON string literal, never shell interpolation.
+      if (closed) {throw new Error('Viewer closed')}
       const script = 'NATIVE_SSH_REQUEST = __import__("json").loads(' + JSON.stringify(JSON.stringify(payload)) + ')\n' + NATIVE_SSH_SCRIPT
       const output = await ssh.exec(bootstrap.map(quote).join(' '), { timeoutMs: 15_000, stdinData: script, maxOutputBytes: limit })
       if (output.length > limit) {throw new Error('Native response too large')}
@@ -113,7 +118,20 @@ export function createNativeSshOwnerClient(ssh: NativeSshExec, hermesLauncher: s
     }
   }
 
+  // A fresh SSH connection per UI request otherwise trips sshd MaxStartups at boot.
+  // Keep one control exchange in flight; never retry or change a refused request.
+  function request(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (closed || pending >= 64) {
+      return Promise.reject(new Error('Native SSH control is closed or busy; no fallback was attempted'))
+    }
+    pending++
+    const result = tail.then(() => executeRequest(payload))
+    tail = result.then(() => { pending-- }, () => { pending-- })
+    return result
+  }
+
   return {
+    close(): Promise<void> { closed = true; return tail },
     async discover(profile: string): Promise<NativeSshOwner> {
       return owner((await request({ operation: 'discover', profile })).endpoint)
     },

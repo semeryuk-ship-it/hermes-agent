@@ -1,5 +1,5 @@
 import { beforeEach, expect, test, vi } from 'vitest'
-const api = vi.hoisted(() => ({ discover: vi.fn(), mint: vi.fn() }))
+const api = vi.hoisted(() => ({ discover: vi.fn(), mint: vi.fn(), close: vi.fn() }))
 vi.mock('./ssh-native-owner', () => ({ createNativeSshOwnerClient: () => api }))
 import { createLocalGatewayDials } from './local-gateway'
 import { connectNativeSshOwner } from './ssh-native-connection'

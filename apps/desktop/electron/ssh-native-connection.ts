@@ -69,7 +69,9 @@ export async function connectNativeSshOwner(
       if (closePromise) {return closePromise}
       closed = true
       profiles.clear()
-      closePromise = Promise.resolve().then(async () => {await ssh.cancelForward(localPort, remotePort)})
+      closePromise = Promise.resolve().then(async () => {
+        try { await client.close() } finally { await ssh.cancelForward(localPort, remotePort) }
+      })
       return closePromise
     }
   }

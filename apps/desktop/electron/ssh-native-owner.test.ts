@@ -10,6 +10,54 @@ function transport(replies: unknown[]) {
   return { exec }
 }
 
+test('a UI burst serializes SSH exchanges but still mints a distinct grant per request', async () => {
+  let active = 0, peak = 0, issued = 0, bootstraps = 0
+  const ssh = { exec: vi.fn(async command => {
+    active++; peak = Math.max(peak, active)
+    await new Promise(resolve => setTimeout(resolve, 2))
+    active--
+    if (command.includes('--print-runtime-command')) { bootstraps++; return bootstrap }
+    return JSON.stringify({ ok: true, endpoint, ticket: `test-${++issued}` })
+  }) }
+  const client = createNativeSshOwnerClient(ssh, '/usr/bin/hermes')
+  const grants = await Promise.all(Array.from({ length: 12 }, () => client.mint('default', 'native-http', endpoint)))
+  expect(peak).toBe(1)
+  expect(bootstraps).toBe(1)
+  expect(new Set(grants).size).toBe(12)
+  expect(ssh.exec).toHaveBeenCalledTimes(13)
+  await client.close()
+})
+
+test('closing during bootstrap drains the active call and cancels queued exchanges before SSH', async () => {
+  let release!: (value:string)=>void
+  const ssh = { exec: vi.fn(() => new Promise<string>(resolve => { release = resolve })) }
+  const client = createNativeSshOwnerClient(ssh, '/usr/bin/hermes')
+  const pending = Promise.allSettled([client.discover('default'), client.mint('default', 'native-http', endpoint)])
+  await vi.waitFor(() => expect(ssh.exec).toHaveBeenCalledTimes(1))
+  let closed = false
+  const closing = client.close().then(() => { closed = true })
+  await Promise.resolve()
+  expect(closed).toBe(false)
+  release(bootstrap)
+  expect((await pending).every(result => result.status === 'rejected')).toBe(true)
+  await closing
+  expect(ssh.exec).toHaveBeenCalledTimes(1)
+  await expect(client.discover('default')).rejects.toThrow('closed or busy')
+})
+
+test('pending control work is bounded and closing does not execute queued requests', async () => {
+  let release!: (value:string)=>void
+  const ssh = { exec: vi.fn(() => new Promise<string>(resolve => { release = resolve })) }
+  const client = createNativeSshOwnerClient(ssh, '/usr/bin/hermes')
+  const pending = Promise.allSettled(Array.from({ length: 64 }, () => client.discover('default')))
+  await expect(client.discover('default')).rejects.toThrow('closed or busy')
+  const closing = client.close()
+  release(bootstrap)
+  await closing
+  expect((await pending).every(result => result.status === 'rejected')).toBe(true)
+  expect(ssh.exec).toHaveBeenCalledTimes(1)
+})
+
 test('discovers through installed SSH runtime without starting or persisting an owner', async () => {
   const ssh = transport([{ ok: true, endpoint }])
   const client = createNativeSshOwnerClient(ssh, '/home/ubuntu/.local/bin/hermes')
