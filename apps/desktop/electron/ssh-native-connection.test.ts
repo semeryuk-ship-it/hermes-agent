@@ -100,9 +100,9 @@ test('main auth rejects a retired viewer id without using local credentials', as
 test('native HTTP and plugin sockets use the same registered viewer and retain window ownership', async () => {
   const {createNativeSshAuth}=await import('./ssh-native-connection')
   const c=await connectNativeSshOwner(ssh(),'/usr/bin/hermes','default',async()=>12345)
-  const prepare=vi.fn().mockReturnValue('private-nonce');const preparePlugin=vi.fn().mockReturnValue('plugin-nonce')
+  const prepare=vi.fn().mockReturnValue('ws://127.0.0.1/api/ws?native_dial=private-nonce');const preparePlugin=vi.fn().mockReturnValue('plugin-nonce')
   const auth=createNativeSshAuth(new Map([[c.id,c]]),{localHeaders:vi.fn(),prepare,preparePlugin})
-  await expect(auth.dial(c.descriptor,'default',42)).resolves.toBe('private-nonce')
+  await expect(auth.dial(c.descriptor,'default',42)).resolves.toBe('ws://127.0.0.1/api/ws?native_dial=private-nonce&desktop_remote=ssh')
   expect(prepare).toHaveBeenCalledWith(c.baseUrl,'fake-ticket',42)
   await expect(auth.dial(c.descriptor,'default',43,'/api/plugins/board/events')).resolves.toBe('plugin-nonce')
   expect(preparePlugin).toHaveBeenCalledWith(c.baseUrl,'/api/plugins/board/events','fake-ticket',43)

@@ -95,7 +95,13 @@ export function createNativeSshAuth(registry: Map<string,NativeSshConnection>, d
     },
     dial(descriptor,profile,windowId:number,pluginPath?:string) {
       return requireViewer(descriptor).dial(String(profile||''),pluginPath?'native-http':'interactive',
-        (origin,ticket)=>pluginPath ? deps.preparePlugin(origin,pluginPath,ticket,windowId) : deps.prepare(origin,ticket,windowId))
+        (origin,ticket)=> {
+          if (pluginPath) {return deps.preparePlugin(origin,pluginPath,ticket,windowId)}
+          // Transport authentication does not make Windows the backend's own host.
+          const url = new URL(deps.prepare(origin,ticket,windowId))
+          url.searchParams.set('desktop_remote','ssh')
+          return url.toString()
+        })
     }
   }
 }

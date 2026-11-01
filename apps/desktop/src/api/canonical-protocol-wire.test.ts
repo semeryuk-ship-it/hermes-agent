@@ -206,3 +206,36 @@ test('shared-socket equal-ID streams use replay owners and unknown epochs reconc
     await new Promise<void>(resolve => server.close(() => resolve()))
   }
 })
+
+test.each([false, true])('native locality tracks backend host (remote=%s)', async remote => {
+  const wsPackage = 'ws'
+  const { WebSocketServer } = await import(wsPackage)
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 })
+  await new Promise<void>(resolve => server.once('listening', resolve))
+  const sent: any[] = []
+  let handshake = ''
+  server.on('connection', (socket: any, request: any) => {
+    handshake = request.url
+    socket.on('message', (bytes: Buffer) => {
+      const frame = JSON.parse(bytes.toString())
+      sent.push(frame)
+      socket.send(JSON.stringify({ jsonrpc: '2.0', id: frame.id, result: {} }))
+    })
+  })
+  const client = new HermesGateway()
+  try {
+    const address = server.address() as { port: number }
+    await client.connect(`ws://127.0.0.1:${address.port}/api/ws?native_dial=fixture&ticket=one-use${remote ? '&desktop_remote=ssh' : ''}`)
+    await client.request('session.info', { session_id: 'existing' })
+    expect(handshake).not.toContain('desktop_remote')
+    expect(handshake).not.toContain('ticket=')
+    expect(handshake).toContain('native_dial=fixture')
+    const claims = sent.filter(frame => frame.method === 'client.capabilities')
+    expect(claims).toHaveLength(remote ? 0 : 1)
+    if (!remote) {expect(claims[0].params).toEqual({ desktop_local: true })}
+  } finally {
+    client.close()
+    for (const socket of server.clients) {socket.terminate()}
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
+})

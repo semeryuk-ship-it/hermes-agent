@@ -99,6 +99,7 @@ function remainingRequestBudget(deadline: number, signal?: AbortSignal): number 
 
 export class HermesGateway extends JsonRpcGatewayClient {
   private canonical = false
+  private desktopOnBackend = false
   private readonly protocol = new CanonicalDesktopProtocol()
   private readonly promptHandlers = new Set<ServerRequestHandler>()
   // A stored ID can exist in several profile islands (for example after import).
@@ -328,12 +329,14 @@ export class HermesGateway extends JsonRpcGatewayClient {
   }
 
   protected override isDesktopLocal(): boolean {
-    return this.canonical
+    return this.desktopOnBackend
   }
 
   override async connect(wsUrl: string): Promise<void> {
     this.connectionGeneration++
-    this.canonical = new URL(wsUrl).searchParams.has('native_dial')
+    const dialUrl = new URL(wsUrl)
+    this.canonical = dialUrl.searchParams.has('native_dial')
+    this.desktopOnBackend = this.canonical && !dialUrl.searchParams.has('desktop_remote')
     this.attached.clear()
     this.deliveredPrompts.clear()
     this.sessionProfiles.clear()
@@ -536,6 +539,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
 
         if (!ticket) {throw new Error('Native gateway requires a fresh private ticket')}
         parsed.searchParams.delete('ticket')
+        parsed.searchParams.delete('desktop_remote')
 
         return new WebSocket(parsed.toString(), [CANONICAL_GATEWAY_PROTOCOL, `hermes-gateway-ticket.${ticket}`])
       }
