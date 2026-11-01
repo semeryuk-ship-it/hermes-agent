@@ -29,7 +29,8 @@ export type PrimaryBackendStartupResult<RuntimeBackend, Connection, Attached = n
   | { kind: 'remote'; connection: Connection }
 
 interface ResolvedPrimaryRemote {
-  authMode?: 'oauth' | 'token'
+  authMode?: 'native' | 'oauth' | 'token'
+  nativeSshId?: string
   baseUrl: string
   connectionId?: string
   headers?: Record<string, string>
@@ -44,6 +45,7 @@ interface ResolvedPrimaryRemote {
     port?: number
     remoteHermesPath?: string
     remoteProfile?: string
+    gatewayMode?: 'native'
     user?: string
   }
   token: unknown
@@ -70,6 +72,7 @@ export function createPrimaryRemoteConnection<State extends object>(
     remoteHermesVersion: remote.remoteHermesVersion,
     ...(remote.connectionId ? { connectionId: remote.connectionId } : {}),
     ...(remote.ssh ? { ssh: remote.ssh } : {}),
+    ...(remote.nativeSshId ? { nativeSshId: remote.nativeSshId } : {}),
     // fetchJsonForBackend reads descriptor.headers for every REST call; the
     // WebSocket header store is keyed by exact URL and cannot stand in for it.
     headers: remote.headers,

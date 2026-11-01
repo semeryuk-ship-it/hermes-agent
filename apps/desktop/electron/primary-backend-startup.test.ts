@@ -9,12 +9,36 @@ import {
   FirstRunSetupResetError,
   runPrimaryBackendStartup
 } from './primary-backend-startup'
+import { createNativeSshAuth } from './ssh-native-connection'
 
 const bootstrapBackend = {
   activeRoot: '/tmp/hermes-home/hermes-agent',
   kind: 'bootstrap-needed',
   platform: 'linux'
 }
+
+test('primary native SSH publication preserves its private auth route for HTTP and WS', async () => {
+  const connection = createPrimaryRemoteConnection({
+    authMode: 'native', nativeSshId: 'viewer', baseUrl: 'http://127.0.0.1:1234',
+    remoteKind: 'ssh', token: null, wsUrl: 'ws://127.0.0.1:1234/api/ws?native_dial=unminted',
+    ssh: { host: 'hermes-uz', gatewayMode: 'native' }
+  }, [], {})
+  const httpHeaders = vi.fn().mockResolvedValue({ 'X-Hermes-Gateway-Ticket': 'test-only' })
+  const dial = vi.fn().mockResolvedValue('window-bound-dial')
+  const localHeaders = vi.fn()
+  const auth = createNativeSshAuth(new Map<string, any>([['viewer', { httpHeaders, dial }]]), {
+    localHeaders, prepare: vi.fn(), preparePlugin: vi.fn()
+  })
+  assert.equal(connection.authMode, 'native')
+  assert.equal(connection.nativeSshId, 'viewer')
+  assert.equal('gatewayEndpoint' in connection, false)
+  await auth.httpHeaders(connection, connection.baseUrl + '/api/sessions', 'GET')
+  await auth.dial(connection, 'default', 42)
+  assert.equal(httpHeaders.mock.calls.length, 1)
+  assert.equal(dial.mock.calls[0][0], 'default')
+  assert.equal(dial.mock.calls[0][1], 'interactive')
+  assert.equal(localHeaders.mock.calls.length, 0)
+})
 
 function startupOptions<T extends Record<string, unknown> = Record<string, never>>(overrides: T = {} as T) {
   const base = {
