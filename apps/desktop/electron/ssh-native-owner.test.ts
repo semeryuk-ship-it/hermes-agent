@@ -10,7 +10,7 @@ function transport(replies: unknown[]) {
   return { exec }
 }
 
-test('a UI burst serializes SSH exchanges but still mints a distinct grant per request', async () => {
+test('a UI burst bounds SSH exchanges to three and mints a distinct grant per request', async () => {
   let active = 0, peak = 0, issued = 0, bootstraps = 0
   const ssh = { exec: vi.fn(async command => {
     active++; peak = Math.max(peak, active)
@@ -21,7 +21,7 @@ test('a UI burst serializes SSH exchanges but still mints a distinct grant per r
   }) }
   const client = createNativeSshOwnerClient(ssh, '/usr/bin/hermes')
   const grants = await Promise.all(Array.from({ length: 12 }, () => client.mint('default', 'native-http', endpoint)))
-  expect(peak).toBe(1)
+  expect(peak).toBe(3)
   expect(bootstraps).toBe(1)
   expect(new Set(grants).size).toBe(12)
   expect(ssh.exec).toHaveBeenCalledTimes(13)
@@ -56,6 +56,33 @@ test('pending control work is bounded and closing does not execute queued reques
   await closing
   expect((await pending).every(result => result.status === 'rejected')).toBe(true)
   expect(ssh.exec).toHaveBeenCalledTimes(1)
+})
+
+test('a failed shared bootstrap is not repeated by concurrent control requests', async () => {
+  const ssh={exec:vi.fn().mockRejectedValue(new Error('PRIVATE_SENTINEL'))}
+  const client=createNativeSshOwnerClient(ssh,'/usr/bin/hermes')
+  const results=await Promise.allSettled(Array.from({length:6},()=>client.discover('default')))
+  expect(results.every(result=>result.status==='rejected'&&!String(result.reason).includes('PRIVATE_SENTINEL'))).toBe(true)
+  expect(ssh.exec).toHaveBeenCalledTimes(1)
+  await client.close()
+})
+
+test('close drains all three active controls and never starts queued work', async () => {
+  const release:((value:string)=>void)[]=[]
+  const ssh={exec:vi.fn(command=>command.includes('--print-runtime-command')?Promise.resolve(bootstrap):new Promise<string>(resolve=>release.push(resolve)))}
+  const client=createNativeSshOwnerClient(ssh,'/usr/bin/hermes')
+  const results=Promise.allSettled(Array.from({length:5},()=>client.discover('default')))
+  await vi.waitFor(()=>expect(release).toHaveLength(3))
+  let closed=false
+  const closing=client.close().then(()=>{closed=true})
+  release[0](JSON.stringify({ok:true,endpoint}));release[1](JSON.stringify({ok:true,endpoint}))
+  await Promise.resolve()
+  expect(closed).toBe(false)
+  release[2](JSON.stringify({ok:true,endpoint}))
+  await closing
+  const settled=await results
+  expect(settled.filter(result=>result.status==='rejected')).toHaveLength(2)
+  expect(ssh.exec).toHaveBeenCalledTimes(4)
 })
 
 test('discovers through installed SSH runtime without starting or persisting an owner', async () => {

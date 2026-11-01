@@ -85,29 +85,33 @@ function owner(value: unknown): NativeSshOwner {
 /** Private replies (especially tickets) must never become error diagnostics or persisted settings. */
 export function createNativeSshOwnerClient(ssh: NativeSshExec, hermesLauncher: string) {
   if (!hermesLauncher.startsWith('/') || /[\r\n\0]/.test(hermesLauncher)) {throw new Error('Invalid remote Hermes launcher')}
-  let bootstrap: string[] | undefined
+  let bootstrap: Promise<string[]> | undefined
   let closed = false
   let pending = 0
-  let tail: Promise<void> = Promise.resolve()
+  const lanes: Promise<void>[] = Array.from({ length: 3 }, () => Promise.resolve())
+  let nextLane = 0
 
   async function executeRequest(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     try {
       if (closed) {throw new Error('Viewer closed')}
       if (!bootstrap) {
-        const output = await ssh.exec(`${quote(hermesLauncher)} --print-runtime-command --module run_agent`, { timeoutMs: 15_000, maxOutputBytes: limit })
-        if (output.length > limit) {throw new Error('Runtime response too large')}
-        const argv: unknown = JSON.parse(output)
-        if (!Array.isArray(argv) || argv.length < 3 || !argv.every(value => typeof value === 'string' && !value.includes('\0')) ||
-            !argv[0].startsWith('/') || argv.at(-2) !== '-c') {throw new Error('Invalid installed runtime')}
-        const marker = "runpy.run_module('run_agent'"
-        const code = argv.at(-1) as string
-        if (code.split(marker).length !== 2) {throw new Error('Unsupported installed bootstrap')}
-        bootstrap = [...argv.slice(0, -1), code.split(marker)[0] + "exec(compile(sys.stdin.buffer.read(), '<desktop-native-ssh>', 'exec'))"]
+        bootstrap = (async () => {
+          const output = await ssh.exec(`${quote(hermesLauncher)} --print-runtime-command --module run_agent`, { timeoutMs: 15_000, maxOutputBytes: limit })
+          if (output.length > limit) {throw new Error('Runtime response too large')}
+          const argv: unknown = JSON.parse(output)
+          if (!Array.isArray(argv) || argv.length < 3 || !argv.every(value => typeof value === 'string' && !value.includes('\0')) ||
+              !argv[0].startsWith('/') || argv.at(-2) !== '-c') {throw new Error('Invalid installed runtime')}
+          const marker = "runpy.run_module('run_agent'"
+          const code = argv.at(-1) as string
+          if (code.split(marker).length !== 2) {throw new Error('Unsupported installed bootstrap')}
+          return [...argv.slice(0, -1), code.split(marker)[0] + "exec(compile(sys.stdin.buffer.read(), '<desktop-native-ssh>', 'exec'))"]
+        })()
       }
+      const runtime = await bootstrap
       // Request is data inside Python source via a JSON string literal, never shell interpolation.
       if (closed) {throw new Error('Viewer closed')}
       const script = 'NATIVE_SSH_REQUEST = __import__("json").loads(' + JSON.stringify(JSON.stringify(payload)) + ')\n' + NATIVE_SSH_SCRIPT
-      const output = await ssh.exec(bootstrap.map(quote).join(' '), { timeoutMs: 15_000, stdinData: script, maxOutputBytes: limit })
+      const output = await ssh.exec(runtime.map(quote).join(' '), { timeoutMs: 15_000, stdinData: script, maxOutputBytes: limit })
       if (output.length > limit) {throw new Error('Native response too large')}
       const result: unknown = JSON.parse(output)
       if (!record(result) || result.ok !== true) {throw new Error('Native request refused')}
@@ -119,19 +123,22 @@ export function createNativeSshOwnerClient(ssh: NativeSshExec, hermesLauncher: s
   }
 
   // A fresh SSH connection per UI request otherwise trips sshd MaxStartups at boot.
-  // Keep one control exchange in flight; never retry or change a refused request.
+  // Three bounded lanes keep UI dials responsive without an unbounded startup burst.
+  // Never retry or change a refused request; each lane keeps its own order.
   function request(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     if (closed || pending >= 64) {
       return Promise.reject(new Error('Native SSH control is closed or busy; no fallback was attempted'))
     }
     pending++
-    const result = tail.then(() => executeRequest(payload))
-    tail = result.then(() => { pending-- }, () => { pending-- })
+    const lane = nextLane
+    nextLane = (nextLane + 1) % lanes.length
+    const result = lanes[lane].then(() => executeRequest(payload))
+    lanes[lane] = result.then(() => { pending-- }, () => { pending-- })
     return result
   }
 
   return {
-    close(): Promise<void> { closed = true; return tail },
+    close(): Promise<void> { closed = true; return Promise.all(lanes).then(() => undefined) },
     async discover(profile: string): Promise<NativeSshOwner> {
       return owner((await request({ operation: 'discover', profile })).endpoint)
     },
