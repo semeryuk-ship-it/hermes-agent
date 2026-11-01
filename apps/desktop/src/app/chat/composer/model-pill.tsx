@@ -171,7 +171,7 @@ export function ModelPill({
 
   const baseTitle = currentProvider
     ? copy.modelTitle(providerDisplayName(currentProvider), currentModel || copy.modelNone)
-    : copy.switchModel
+    : currentModel.trim() ? `${copy.switchModel}: ${currentModel}` : copy.switchModel
 
   const title = pinnedOverride ? `${baseTitle} — ${copy.modelPinned}` : baseTitle
 
@@ -179,7 +179,7 @@ export function ModelPill({
     return (
       <Tip label={pinnedOverride ? `${copy.openModelPicker} — ${copy.modelPinned}` : copy.openModelPicker} side="top">
         <Button
-          aria-label={copy.openModelPicker}
+          aria-label={title}
           className={pillClass}
           data-tour={tourMarker}
           disabled={disabled}

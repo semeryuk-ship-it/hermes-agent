@@ -267,3 +267,13 @@ describe('ModelPill label providers', () => {
     expect(second).not.toHaveBeenCalled()
   })
 })
+
+
+describe('ModelPill identity without a provider', () => {
+  it.each([false, true])('keeps the exact model in the accessible button name (live menu=%s)', live => {
+    render(<ModelPill compact disabled={false} model={modelState({
+      model: 'gpt-6.1-sol', provider: '', modelMenuContent: live ? <div /> : undefined
+    })} />)
+    expect(screen.getByRole('button', { name: /gpt-6\.1-sol/ })).toBeTruthy()
+  })
+})
