@@ -457,7 +457,22 @@ export class HermesGateway extends JsonRpcGatewayClient {
         return this.request(m, p, remainingRequestBudget(deadline, signal), signal)
       }
 
-      const settled = await this.protocol.settle(method, prepared, this.protocol.result(method, prepared, result), followUp) as T
+      const projected = this.protocol.result(method, prepared, result)
+      let settled: T
+      try {
+        settled = await this.protocol.settle(method, prepared, projected, followUp) as T
+      } catch (error) {
+        // Keep the owner's confirmed attachment, replay identity and pending prompts
+        // even if its auxiliary metadata read fails. Never adopt an old socket's reply.
+        if (generation === this.connectionGeneration && ['session.resume', 'session.activate'].includes(method)
+            && typeof projected?.session_id === 'string' && projected.session_id.trim()
+            && Number.isInteger(projected.revision) && Number.isInteger(projected.execution_generation)
+            && typeof projected.replay_epoch === 'string' && projected.replay_epoch
+            && typeof projected.subscription_id === 'string' && projected.subscription_id) {
+          this.adoptAttachedSnapshot(projected, prepared.profile)
+        }
+        throw error
+      }
       this.requireConnectionGeneration(generation)
 
       if (method === 'session.resume' || method === 'session.create' || method === 'session.activate') {

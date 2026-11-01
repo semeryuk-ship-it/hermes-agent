@@ -744,6 +744,23 @@ export class CanonicalDesktopProtocol {
   // the compress action repaints only from `messages`, so resume the session
   // through the normal request path (which also re-primes revision/generation).
   async settle(method: string, params: Record<string, unknown>, value: any, request: (method: string, params: Record<string, unknown>) => Promise<any>): Promise<any> {
+    // Messaging resume snapshots may contain only the protocol marker. Read the
+    // same attached session's supported info endpoint; never infer a model from SQL/defaults.
+    if (['session.resume', 'session.activate'].includes(method)
+        && value?.info?.desktop_protocol === CANONICAL_GATEWAY_PROTOCOL
+        && !(typeof value.info.model === 'string' && value.info.model.trim())) {
+      if (typeof value.session_id !== 'string' || !value.session_id.trim()) { throw new Error('Invalid attached session identity') }
+      const metadata = await request('session.info', {
+        session_id: value.session_id, ...(params.profile !== undefined ? { profile: params.profile } : {})
+      })
+      if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)
+          || typeof metadata.model !== 'string' || !metadata.model.trim()) { throw new Error('Invalid session info response') }
+      const info = { ...value.info }
+      for (const [key, field] of Object.entries(metadata)) {
+        if (info[key] === undefined || info[key] === null || (key === 'model' && !(typeof info[key] === 'string' && info[key].trim()))) { info[key] = field }
+      }
+      return { ...value, info }
+    }
     if (method !== 'session.compress' && !(method === 'slash.exec' && params.operation === 'compress')) { return value }
 
     // `--preview` in the focus argument is a read-only report: no transcript changed.
