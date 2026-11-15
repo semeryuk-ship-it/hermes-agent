@@ -111,6 +111,37 @@ function PoolUsageTip({ accounts, copy }: { accounts: PoolAccountView[]; copy: M
 function useChipState(provider: ModelOptionProvider): ChipState | null {
   const { t } = useI18n()
   const copy = t.shell.modelMenu
+  // Named Codex routes own exactly one login: report its weekly window even
+  // above the generic low-quota threshold, without aggregating different logins.
+  const namedPool = provider.slug.startsWith('codex-') ? poolUsage(provider) : null
+  const namedAccount = namedPool?.accounts.length === 1 ? namedPool.accounts[0] : null
+
+  const weekly =
+    namedAccount && (namedAccount.state === 'ready' || namedAccount.state === 'limited')
+      ? namedAccount.windows.find(window => window.label === 'Weekly')
+      : null
+
+  if (weekly && namedAccount) {
+    return {
+      label: `${weekly.label} · ${copy.usageLeft(weekly.remaining, null)}`,
+      remaining: weekly.remaining,
+      tip: (
+        <span className="whitespace-pre-line">
+          {namedAccount.windows
+            .map(window =>
+              copy.usageWindow(
+                window.label,
+                window.remaining,
+                window.resetMs === null ? null : formatReset(window.resetMs)
+              )
+            )
+            .join('\n')}
+        </span>
+      ),
+      warn: weekly.remaining <= USAGE_WARN_PERCENT
+    }
+  }
+
   const pool = poolChipState(provider, copy)
 
   if (pool) {

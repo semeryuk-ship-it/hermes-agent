@@ -1,0 +1,5 @@
+name: codex-accounts-provider
+kind: model-provider
+version: 1.0.0
+description: Named ChatGPT subscription accounts with isolated OAuth credential pools
+author: Hermes contributors

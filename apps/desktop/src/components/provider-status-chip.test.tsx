@@ -34,6 +34,34 @@ const view = (row: ModelOptionProvider) => (
 
 afterEach(() => vi.useRealTimers())
 
+it.each([0, 39, 100])('always shows the named account weekly remainder at %s percent used', used => {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW)
+
+  const row = provider([
+    {
+      id: 'named',
+      state: used === 100 ? 'limited' : 'ready',
+      resets_at: used === 100 ? iso(60) : null,
+      windows: [
+        { label: 'Session', used_percent: 90, resets_at: iso(30) },
+        { label: 'Weekly', used_percent: used, resets_at: iso(60) }
+      ]
+    }
+  ])
+
+  row.slug = 'codex-ekaterina'
+  render(view(row))
+  expect(screen.getByText(`Weekly · ${100 - used}% left`)).toBeTruthy()
+})
+
+it('does not invent a weekly percentage for an unknown named account', () => {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW)
+  const row = provider([{ id: 'named', state: 'unknown', windows: [], resets_at: null }])
+  row.slug = 'codex-ekaterina'
+  render(view(row))
+  expect(screen.queryByText(/Weekly ·/)).toBeNull()
+})
+
 it('keeps a mixed pool usable and exposes each account rather than a provider-wide empty gauge', async () => {
   vi.spyOn(Date, 'now').mockReturnValue(NOW)
   const accounts = Array.from({ length: 10 }, (_, i) => account(i, i === 0))
