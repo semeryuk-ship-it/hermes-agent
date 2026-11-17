@@ -187,9 +187,15 @@ _CORE_RULES_MAX_CHARS = 65536
 _TRUSTED_CORE_RULES_SHA256 = "36612c6761f54bebd3f664780004f2a9458f9329c3db99960a05a80ff24872ad"
 _CORE_RULES_FALLBACK = (
     "\nWARNING: CORE-RULES UNAVAILABLE OR UNVERIFIED (file missing, unreadable, or checksum mismatch).\n"
-    "Mandatory rules could not be loaded. Treat this task as potentially critical: no destructive\n"
-    "operations, no deploy, no messages to real recipients, no secrets exposure. Report this warning\n"
-    "to your parent in the final summary.\n"
+    "Mandatory rules could not be loaded. MANDATORY BEHAVIOR:\n"
+    "1) If the task is potentially critical (finances/payments; databases or migrations; "
+    "authorization, access rights or personal data; secrets/security; messages to real "
+    "recipients; infrastructure/deploy/rollback) — STOP. Do not perform any part of it. "
+    "Report this warning to your parent and wait for instructions.\n"
+    "2) Non-critical work may proceed read-only or with clearly reversible local edits only.\n"
+    "3) Always mention this warning in your final summary to the parent.\n"
+    "Missing rules are NOT replaced by independent review; a critical task without\n"
+    "loaded rules is blocked, not merely reviewed.\n"
 )
 
 
