@@ -177,6 +177,39 @@ _NESTED_CHILDREN_NOTE = (
     "from the nesting depth; children at the maximum depth cannot delegate further. No parameter override is available."
 )
 
+_CORE_RULES_INTRO = (
+    "\nMANDATORY CORE RULES (canonical; apply regardless of model; a violation is a defect to report):\n"
+)
+_CORE_RULES_MAX_CHARS = 12000
+
+
+def _load_core_rules_block() -> str:
+    """Best-effort canonical core rules injected into every subagent prompt (HERMES-IMPL-001 §5.2).
+
+    Delivered as CONTENT, not a path: delegate children run with skip_memory=True and
+    skip_context_files=True, so a file reference cannot guarantee delivery. Resolution order:
+    HERMES_CORE_RULES_PATH env override, then <HERMES_HOME>/core-rules/CORE-RULES.md, then
+    <LOCALAPPDATA>/hermes/core-rules/CORE-RULES.md. Missing/unreadable file -> empty block
+    (fail-soft: delegation must never break because rules are absent)."""
+    import os as _os
+    _candidates = [_os.environ.get("HERMES_CORE_RULES_PATH")]
+    _home = _os.environ.get("HERMES_HOME")
+    if _home:
+        _candidates.append(_os.path.join(_home, "core-rules", "CORE-RULES.md"))
+    _local = _os.environ.get("LOCALAPPDATA")
+    if _local:
+        _candidates.append(_os.path.join(_local, "hermes", "core-rules", "CORE-RULES.md"))
+    for _path in filter(None, _candidates):
+        try:
+            with open(_path, encoding="utf-8") as _f:
+                _text = _f.read(_CORE_RULES_MAX_CHARS)
+            if _text.strip():
+                return _CORE_RULES_INTRO + _text.strip() + "\n"
+        except OSError:
+            continue
+    return ""
+
+
 def _build_child_system_prompt(
     goal: str, context: Optional[str] = None, *, workspace_path: Optional[str] = None, role: str = "leaf",
     max_spawn_depth: int = 2, child_depth: int = 1,
@@ -188,6 +221,9 @@ def _build_child_system_prompt(
     # Keeping it out of the system prompt avoids sending OAuth Anthropic the
     # same task in both roles, while preserving the normal user-turn contract.
     parts = ["You are a focused subagent working on a specific delegated task."]
+    _core_rules = _load_core_rules_block()
+    if _core_rules:
+        parts.append(_core_rules)
     if context and context.strip():
         parts.append(f"\nCONTEXT:\n{context}")
     if workspace_path and str(workspace_path).strip():
