@@ -180,34 +180,63 @@ _NESTED_CHILDREN_NOTE = (
 _CORE_RULES_INTRO = (
     "\nMANDATORY CORE RULES (canonical; apply regardless of model; a violation is a defect to report):\n"
 )
-_CORE_RULES_MAX_CHARS = 12000
+_CORE_RULES_MAX_CHARS = 65536
+# Доверенная утверждённая версия: полный байтовый SHA256 CORE-RULES.md v2026-11-17.2
+# из git-репозитория semeryuk-ship-it/hermes-core-rules (commit 60e2269).
+# При обновлении правил это значение меняется тем же PR, который меняет правила.
+_TRUSTED_CORE_RULES_SHA256 = "36612c6761f54bebd3f664780004f2a9458f9329c3db99960a05a80ff24872ad"
+_CORE_RULES_FALLBACK = (
+    "\nWARNING: CORE-RULES UNAVAILABLE OR UNVERIFIED (file missing, unreadable, or checksum mismatch).\n"
+    "Mandatory rules could not be loaded. Treat this task as potentially critical: no destructive\n"
+    "operations, no deploy, no messages to real recipients, no secrets exposure. Report this warning\n"
+    "to your parent in the final summary.\n"
+)
+
+
+def _read_verified_core_rules(path):
+    """Читает CORE-RULES.md только если его полный байтовый SHA256 равен
+    доверенной утверждённой константе _TRUSTED_CORE_RULES_SHA256 (якорь из git).
+    Возвращает (text, truncated) или None. Переопределение пути через
+    HERMES_CORE_RULES_PATH проходит тот же контроль — подменённый или
+    рассинхронизированный файл не будет внедрён как канонический."""
+    import hashlib
+    from pathlib import Path
+    try:
+        p = Path(path)
+        raw = p.read_bytes()
+        truncated = len(raw) > _CORE_RULES_MAX_CHARS
+        if hashlib.sha256(raw).hexdigest() != _TRUSTED_CORE_RULES_SHA256:
+            return None
+        if truncated:
+            raw = raw[:_CORE_RULES_MAX_CHARS]
+        return raw.decode("utf-8", "replace"), truncated
+    except OSError:
+        return None
 
 
 def _load_core_rules_block() -> str:
-    """Best-effort canonical core rules injected into every subagent prompt (HERMES-IMPL-001 §5.2).
+    """Канонические правила в промпт каждого субагента (HERMES-IMPL-001 §5.2).
 
-    Delivered as CONTENT, not a path: delegate children run with skip_memory=True and
-    skip_context_files=True, so a file reference cannot guarantee delivery. Resolution order:
-    HERMES_CORE_RULES_PATH env override, then <HERMES_HOME>/core-rules/CORE-RULES.md, then
-    <LOCALAPPDATA>/hermes/core-rules/CORE-RULES.md. Missing/unreadable file -> empty block
-    (fail-soft: delegation must never break because rules are absent)."""
+    Доставляется СОДЕРЖИМЫМ, не ссылкой: субагенты работают с skip_memory=True и
+    skip_context_files=True. Fail-safe, а не fail-soft: если правила не удалось
+    загрузить или проверить, ребёнок получает явный WARNING-блок и работает как
+    с потенциально критической задачей — незаметное выполнение без правил
+    недопустимо."""
     import os as _os
     _candidates = [_os.environ.get("HERMES_CORE_RULES_PATH")]
-    _home = _os.environ.get("HERMES_HOME")
-    if _home:
-        _candidates.append(_os.path.join(_home, "core-rules", "CORE-RULES.md"))
+    _home = _os.environ.get("HERMES_HOME") or _os.path.expanduser("~/.hermes")
+    _candidates.append(_os.path.join(_home, "core-rules", "CORE-RULES.md"))
     _local = _os.environ.get("LOCALAPPDATA")
     if _local:
         _candidates.append(_os.path.join(_local, "hermes", "core-rules", "CORE-RULES.md"))
     for _path in filter(None, _candidates):
-        try:
-            with open(_path, encoding="utf-8") as _f:
-                _text = _f.read(_CORE_RULES_MAX_CHARS)
-            if _text.strip():
-                return _CORE_RULES_INTRO + _text.strip() + "\n"
-        except OSError:
+        _loaded = _read_verified_core_rules(_path)
+        if _loaded is None:
             continue
-    return ""
+        _text, _truncated = _loaded
+        _tail = "\n[WARNING: CORE-RULES TRUNCATED]\n" if _truncated else "\n"
+        return _CORE_RULES_INTRO + _text.strip() + _tail
+    return _CORE_RULES_FALLBACK
 
 
 def _build_child_system_prompt(
