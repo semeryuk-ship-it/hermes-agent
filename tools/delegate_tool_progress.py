@@ -181,10 +181,10 @@ _CORE_RULES_INTRO = (
     "\nMANDATORY CORE RULES (canonical; apply regardless of model; a violation is a defect to report):\n"
 )
 _CORE_RULES_MAX_CHARS = 65536
-# Доверенная утверждённая версия: полный байтовый SHA256 CORE-RULES.md v2026-11-17.2
-# из git-репозитория semeryuk-ship-it/hermes-core-rules (commit 60e2269).
+# Доверенная утверждённая версия: полный байтовый SHA256 CORE-RULES.md v2026-11-18.1
+# из git-репозитория semeryuk-ship-it/hermes-core-rules (commit 8c8fa75).
 # При обновлении правил это значение меняется тем же PR, который меняет правила.
-_TRUSTED_CORE_RULES_SHA256 = "36612c6761f54bebd3f664780004f2a9458f9329c3db99960a05a80ff24872ad"
+_TRUSTED_CORE_RULES_SHA256 = "1e2b0084ca67f4c7393eb168bca46f2c8e55c05e0db52f40be0c3b0508ca096a"
 _CORE_RULES_FALLBACK = (
     "\nWARNING: CORE-RULES UNAVAILABLE OR UNVERIFIED (file missing, unreadable, or checksum mismatch).\n"
     "Mandatory rules could not be loaded. MANDATORY BEHAVIOR:\n"
