@@ -177,6 +177,74 @@ _NESTED_CHILDREN_NOTE = (
     "from the nesting depth; children at the maximum depth cannot delegate further. No parameter override is available."
 )
 
+_CORE_RULES_INTRO = (
+    "\nMANDATORY CORE RULES (canonical; apply regardless of model; a violation is a defect to report):\n"
+)
+_CORE_RULES_MAX_CHARS = 65536
+# Доверенная утверждённая версия: полный байтовый SHA256 CORE-RULES.md v2026-11-18.1
+# из git-репозитория semeryuk-ship-it/hermes-core-rules (commit 8c8fa75).
+# При обновлении правил это значение меняется тем же PR, который меняет правила.
+_TRUSTED_CORE_RULES_SHA256 = "1e2b0084ca67f4c7393eb168bca46f2c8e55c05e0db52f40be0c3b0508ca096a"
+_CORE_RULES_FALLBACK = (
+    "\nWARNING: CORE-RULES UNAVAILABLE OR UNVERIFIED (file missing, unreadable, or checksum mismatch).\n"
+    "Mandatory rules could not be loaded. MANDATORY BEHAVIOR:\n"
+    "1) If the task is potentially critical (finances/payments; databases or migrations; "
+    "authorization, access rights or personal data; secrets/security; messages to real "
+    "recipients; infrastructure/deploy/rollback) — STOP. Do not perform any part of it. "
+    "Report this warning to your parent and wait for instructions.\n"
+    "2) Non-critical work may proceed read-only or with clearly reversible local edits only.\n"
+    "3) Always mention this warning in your final summary to the parent.\n"
+    "Missing rules are NOT replaced by independent review; a critical task without\n"
+    "loaded rules is blocked, not merely reviewed.\n"
+)
+
+
+def _read_verified_core_rules(path):
+    """Читает CORE-RULES.md только если его полный байтовый SHA256 равен
+    доверенной утверждённой константе _TRUSTED_CORE_RULES_SHA256 (якорь из git).
+    Возвращает (text, truncated) или None. Переопределение пути через
+    HERMES_CORE_RULES_PATH проходит тот же контроль — подменённый или
+    рассинхронизированный файл не будет внедрён как канонический."""
+    import hashlib
+    from pathlib import Path
+    try:
+        p = Path(path)
+        raw = p.read_bytes()
+        truncated = len(raw) > _CORE_RULES_MAX_CHARS
+        if hashlib.sha256(raw).hexdigest() != _TRUSTED_CORE_RULES_SHA256:
+            return None
+        if truncated:
+            raw = raw[:_CORE_RULES_MAX_CHARS]
+        return raw.decode("utf-8", "replace"), truncated
+    except OSError:
+        return None
+
+
+def _load_core_rules_block() -> str:
+    """Канонические правила в промпт каждого субагента (HERMES-IMPL-001 §5.2).
+
+    Доставляется СОДЕРЖИМЫМ, не ссылкой: субагенты работают с skip_memory=True и
+    skip_context_files=True. Fail-safe, а не fail-soft: если правила не удалось
+    загрузить или проверить, ребёнок получает явный WARNING-блок и работает как
+    с потенциально критической задачей — незаметное выполнение без правил
+    недопустимо."""
+    import os as _os
+    _candidates = [_os.environ.get("HERMES_CORE_RULES_PATH")]
+    _home = _os.environ.get("HERMES_HOME") or _os.path.expanduser("~/.hermes")
+    _candidates.append(_os.path.join(_home, "core-rules", "CORE-RULES.md"))
+    _local = _os.environ.get("LOCALAPPDATA")
+    if _local:
+        _candidates.append(_os.path.join(_local, "hermes", "core-rules", "CORE-RULES.md"))
+    for _path in filter(None, _candidates):
+        _loaded = _read_verified_core_rules(_path)
+        if _loaded is None:
+            continue
+        _text, _truncated = _loaded
+        _tail = "\n[WARNING: CORE-RULES TRUNCATED]\n" if _truncated else "\n"
+        return _CORE_RULES_INTRO + _text.strip() + _tail
+    return _CORE_RULES_FALLBACK
+
+
 def _build_child_system_prompt(
     goal: str, context: Optional[str] = None, *, workspace_path: Optional[str] = None, role: str = "leaf",
     max_spawn_depth: int = 2, child_depth: int = 1,
@@ -188,6 +256,9 @@ def _build_child_system_prompt(
     # Keeping it out of the system prompt avoids sending OAuth Anthropic the
     # same task in both roles, while preserving the normal user-turn contract.
     parts = ["You are a focused subagent working on a specific delegated task."]
+    _core_rules = _load_core_rules_block()
+    if _core_rules:
+        parts.append(_core_rules)
     if context and context.strip():
         parts.append(f"\nCONTEXT:\n{context}")
     if workspace_path and str(workspace_path).strip():
