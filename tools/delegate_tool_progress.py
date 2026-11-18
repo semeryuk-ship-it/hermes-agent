@@ -235,6 +235,13 @@ def _load_core_rules_block() -> str:
     _local = _os.environ.get("LOCALAPPDATA")
     if _local:
         _candidates.append(_os.path.join(_local, "hermes", "core-rules", "CORE-RULES.md"))
+    # Якорь рядом с кодом: worker-и с зачищенным окружением (без env) тоже
+    # находят канон. delegate_tool_progress.py -> tools/ -> hermes-agent/ -> hermes/.
+    try:
+        from pathlib import Path as _P
+        _candidates.append(str(_P(__file__).resolve().parents[2] / "core-rules" / "CORE-RULES.md"))
+    except Exception:
+        pass
     for _path in filter(None, _candidates):
         _loaded = _read_verified_core_rules(_path)
         if _loaded is None:
